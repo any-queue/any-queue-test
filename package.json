@@ -1,0 +1,31 @@
+{
+  "name": "any-queue-test",
+  "version": "1.0.0",
+  "description": "Test helper for any-queue integrations",
+  "main": "index.js",
+  "scripts": {},
+  "keywords": [],
+  "author": {
+    "name": "Gerardo Munguia",
+    "email": "<gerardomunguiahoyo@gmail.com>",
+    "url": "gmunguia.com"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "eslint": "^4.16.0",
+    "eslint-config-prettier": "^2.9.0",
+    "eslint-plugin-prettier": "^2.5.0",
+    "prettier": "1.10.2"
+  },
+  "peerDependencies": {
+    "mocha": "^5.0.0"
+  },
+  "repository": "gmunguia/any-queue-test",
+  "dependencies": {
+    "assert": "^1.4.1",
+    "countdown-promise": "^1.0.2",
+    "debug": "^3.1.0",
+    "ramda": "^0.25.0",
+    "sinon": "^5.0.10"
+  }
+}
