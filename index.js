@@ -1,6 +1,6 @@
 /* eslint-env mocha */
 const debug = require("debug");
-const { countBy, head, prop, sortBy } = require("ramda");
+const { countBy, filter, head, prop, sortBy } = require("ramda");
 const assert = require("assert");
 const { spy } = require("sinon");
 const Countdown = require("countdown-promise");
@@ -8,32 +8,89 @@ const { Queue, Worker } = require("../any-queue/lib/bundle.js");
 
 const emptyArray = length => Array.from(Array(length));
 
-module.exports = function testIntegration({ name, persistenceInterface }) {
-  const log = debug(`test:integration:${name}`);
+module.exports = function testIntegration({
+  name,
+  createPersistenceInterface
+}) {
+  const log = debug(`anyqueue:test:integration:${name}`);
 
-  const assertJobsCreated = function assertJobsCreated(jobCount) {
-    return persistenceInterface.readJob({}).then(jobs => {
-      assert.equal(jobs.length, jobCount, "Some jobs were not created.");
-    });
+  const assertJobsCreated = async function assertJobsCreated(jobCount) {
+    const { connect, disconnect, readJob } = await createPersistenceInterface();
+
+    await connect();
+    const jobs = await readJob({});
+    assert.equal(jobs.length, jobCount, "Some jobs were not created.");
+    await disconnect();
   };
 
-  const assertJobsDone = function assertJobsDone(jobCount) {
-    return persistenceInterface.readJob({}).then(jobs => {
-      const doneJobs = jobs.filter(j => j.status === "done");
-      assert.equal(doneJobs.length, jobCount, "Some jobs have not been done.");
-    });
+  const assertJobsDone = async function assertJobsDone(jobCount) {
+    const { connect, disconnect, readJob } = await createPersistenceInterface();
+
+    await connect();
+    const jobs = await readJob({});
+    const doneJobs = jobs.filter(j => j.status === "done");
+    assert.equal(doneJobs.length, jobCount, "Some jobs have not been done.");
+
+    await disconnect();
   };
 
   const assertJobsHandled = function assertJobsHandled(jobCount, handledJobs) {
     const handledData = handledJobs.map(prop("data"));
-    const timesHandled = Object.values(countBy(prop("i"))(handledData));
-    const wasAnyHandledTwice = timesHandled.some(times => times > 1);
 
-    assert(handledJobs.length >= jobCount, "Some jobs were not handled.");
-    assert(!wasAnyHandledTwice, "Some jobs were handled twice.");
+    const unhandledJobs = emptyArray(jobCount)
+      .map((_, i) => i)
+      .filter(i => !handledData.some(data => data.i === i));
+
+    const counted = countBy(prop("i"))(handledData);
+    const handledTwice = filter(n => n > 1, counted);
+
+    assert.deepEqual(unhandledJobs, []);
+    assert.deepEqual(handledTwice, []);
   };
 
   const testJobProcessing = function testJobProcessing(workerCount, jobCount) {
+    return done => {
+      const countdown = Countdown(jobCount);
+
+      countdown.promise
+        .then(() => stop())
+        .then(() => assertJobsCreated(jobCount))
+        .then(() => assertJobsDone(jobCount))
+        .then(() => assertJobsHandled(jobCount, flagJobHandled.args.map(head)))
+        .then(() => done());
+
+      const flagJobHandled = spy(job => {
+        log("handled job", job.id, job.data.i);
+        countdown.count();
+      });
+
+      const queue = new Queue({
+        persistenceInterface: createPersistenceInterface(),
+        name: "test-queue"
+      });
+      const createWorker = () =>
+        Worker({
+          persistenceInterface: createPersistenceInterface(),
+          queueName: "test-queue",
+          instructions: flagJobHandled
+        });
+      const createJob = i => queue.now({ i });
+      const workers = emptyArray(workerCount).map(createWorker);
+      const createdJobs = emptyArray(jobCount).map((_, i) => createJob(i));
+
+      log(`created ${workers.length} workers and ${createdJobs.length} jobs.`);
+
+      const stop = (() => {
+        workers.forEach(w => w.punchIn());
+        return () => Promise.all(workers.map(w => w.punchOut()));
+      })();
+    };
+  };
+
+  const testConnectionReuse = function testConnectionReuse(
+    workerCount,
+    jobCount
+  ) {
     return done => {
       const countdown = Countdown(jobCount);
 
@@ -48,7 +105,12 @@ module.exports = function testIntegration({ name, persistenceInterface }) {
         countdown.count();
       });
 
-      const queue = new Queue({ persistenceInterface, name: "test-queue" });
+      const persistenceInterface = createPersistenceInterface();
+
+      const queue = new Queue({
+        persistenceInterface,
+        name: "test-queue"
+      });
       const createWorker = () =>
         Worker({
           persistenceInterface,
@@ -79,7 +141,10 @@ module.exports = function testIntegration({ name, persistenceInterface }) {
 
   const testJobBlocker = function testJobBlocker(workerCount, jobCount) {
     return done => {
-      const queue = new Queue({ persistenceInterface, name: "test-queue" });
+      const queue = new Queue({
+        persistenceInterface: createPersistenceInterface(),
+        name: "test-queue"
+      });
       const createJob = i => blockers => queue.now({ i }, { blockers });
       const creatingJobs = emptyArray(jobCount)
         .map((_, i) => createJob(i))
@@ -104,7 +169,7 @@ module.exports = function testIntegration({ name, persistenceInterface }) {
 
         const createWorker = () =>
           Worker({
-            persistenceInterface,
+            persistenceInterface: createPersistenceInterface(),
             queueName: "test-queue",
             instructions: flagJobHandled
           });
@@ -132,6 +197,16 @@ module.exports = function testIntegration({ name, persistenceInterface }) {
     );
   };
 
+  const connectionReuseTestCase = function connectionReuseTestCase(
+    workerCount,
+    jobCount
+  ) {
+    it(
+      `Processes ${jobCount} jobs with ${workerCount} workers, reusing connection`,
+      testConnectionReuse(workerCount, jobCount)
+    );
+  };
+
   const blockersTestCase = function blockersTestCase(workerCount, jobCount) {
     it(
       `Processes ${jobCount} jobs with ${workerCount} workers, observing blockers`,
@@ -140,20 +215,25 @@ module.exports = function testIntegration({ name, persistenceInterface }) {
   };
 
   describe(`Test integration with ${name}`, function() {
-    this.timeout(60000);
-    // TODO: clean setup
-    //before("Set up", () =>
-    //persistenceInterface
-    //.connect()
-    //.then(persistenceInterface.refresh)
-    //.then(persistenceInterface.disconnect)
-    //);
-    afterEach("Refresh", persistenceInterface.refresh);
-    afterEach("Disconnect", persistenceInterface.disconnect);
+    this.timeout(120000);
+
+    beforeEach("Refresh", async () => {
+      const {
+        connect,
+        disconnect,
+        refresh
+      } = await createPersistenceInterface();
+
+      await connect();
+      await refresh();
+      await disconnect();
+    });
 
     jobProcessingTestCase(1, 1);
     jobProcessingTestCase(1, 2);
     jobProcessingTestCase(2, 1);
+    jobProcessingTestCase(10, 50);
+    connectionReuseTestCase(1, 3);
     blockersTestCase(1, 1);
     blockersTestCase(5, 20);
     jobProcessingTestCase(1, 100);
