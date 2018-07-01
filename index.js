@@ -4,11 +4,13 @@ const { countBy, filter, head, prop, sortBy } = require("ramda");
 const assert = require("assert");
 const { spy } = require("sinon");
 const Countdown = require("countdown-promise");
-const { Queue, Worker } = require("../any-queue/lib/bundle.js");
+const anyQueue = require("any-queue");
 
 const emptyArray = length => Array.from(Array(length));
 
 module.exports = function testIntegration({
+  Queue = anyQueue.Queue,
+  Worker = anyQueue.Worker,
   name,
   createPersistenceInterface
 }) {
