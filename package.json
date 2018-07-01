@@ -17,7 +17,7 @@
     "eslint-plugin-prettier": "^2.5.0",
     "prettier": "1.10.2"
   },
-  "repository": "gmunguia/any-queue-test",
+  "repository": "any-queue/any-queue-test",
   "dependencies": {
     "assert": "^1.4.1",
     "countdown-promise": "^1.0.2",
